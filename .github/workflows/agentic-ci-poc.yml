@@ -37,7 +37,7 @@ jobs:
           RESULT=$(claude \
             --model "aws/anthropic/bedrock-claude-opus-4-6" \
             -p "$FINAL_PROMPT" \
-            --max-turns 1 \
+            --max-turns 10 \
             --allowedTools "Read,Glob,Grep" \
             2>&1)
 
