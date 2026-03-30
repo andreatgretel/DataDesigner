@@ -21,40 +21,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Claude
+      - name: Debug environment
+        run: |
+          echo "=== Claude CLI ==="
+          which claude || echo "claude not in PATH"
+          claude --version || echo "claude --version failed"
+          echo ""
+          echo "=== PATH ==="
+          echo "$PATH"
+          echo ""
+          echo "=== Node ==="
+          node --version || echo "no node"
+          echo ""
+          echo "=== Secrets set? ==="
+          if [ -n "$API_URL" ]; then echo "AGENTIC_CI_API_BASE_URL: set"; else echo "AGENTIC_CI_API_BASE_URL: NOT SET"; fi
+          if [ -n "$API_KEY" ]; then echo "AGENTIC_CI_API_KEY: set"; else echo "AGENTIC_CI_API_KEY: NOT SET"; fi
+        env:
+          API_URL: ${{ secrets.AGENTIC_CI_API_BASE_URL }}
+          API_KEY: ${{ secrets.AGENTIC_CI_API_KEY }}
+
+      - name: Test Claude
+        if: success()
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.AGENTIC_CI_API_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.AGENTIC_CI_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PROMPT: ${{ github.event.inputs.prompt }}
         run: |
-          DEFAULT_PROMPT="List the top 3 most important files in this repo and explain why in one sentence each. Be concise."
-          FINAL_PROMPT="${PROMPT:-$DEFAULT_PROMPT}"
-
-          echo "=== Running Claude via Inference API ==="
-          echo "Prompt: $FINAL_PROMPT"
-
-          RESULT=$(claude \
-            --model "aws/anthropic/bedrock-claude-opus-4-6" \
-            -p "$FINAL_PROMPT" \
-            --max-turns 1 \
-            --allowedTools "Read,Glob,Grep" \
-            2>&1)
-
-          echo "=== Claude Output ==="
-          echo "$RESULT"
-
-          echo "=== Posting as issue comment ==="
-          gh issue create \
-            --title "Agentic CI PoC - $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --body "$(cat <<EOF
-          **Prompt:** $FINAL_PROMPT
-
-          **Response:**
-
-          $RESULT
-
-          ---
-          *Posted by agentic CI proof-of-concept run*
-          EOF
-          )"
+          claude --model "aws/anthropic/bedrock-claude-opus-4-6" -p "Say hello" --max-turns 1 2>&1 || true
