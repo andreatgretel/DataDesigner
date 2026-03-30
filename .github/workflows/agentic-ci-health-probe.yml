@@ -1,0 +1,82 @@
+name: Agentic CI - API Health Probe
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"  # every 4 hours
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 2
+    steps:
+      - name: Ping Inference API
+        id: ping
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.AGENTIC_CI_API_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.AGENTIC_CI_API_KEY }}
+        run: |
+          START=$(date +%s%N)
+
+          HTTP_CODE=$(curl -s -o /tmp/api-response.json -w "%{http_code}" \
+            -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -d '{"model":"aws/anthropic/bedrock-claude-opus-4-6","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}')
+
+          END=$(date +%s%N)
+          LATENCY_MS=$(( (END - START) / 1000000 ))
+
+          echo "http_code=${HTTP_CODE}" >> "$GITHUB_OUTPUT"
+          echo "latency_ms=${LATENCY_MS}" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+            echo "API responded ${HTTP_CODE} in ${LATENCY_MS}ms"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::API returned ${HTTP_CODE} in ${LATENCY_MS}ms"
+            cat /tmp/api-response.json
+          fi
+
+      - name: Report failure
+        if: steps.ping.outputs.status == 'failed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Agentic CI: Inference API health check failure"
+
+          # Check if there's an open issue already
+          EXISTING=$(gh issue list --state open --search "$TITLE" --json number --jq '.[0].number // empty')
+
+          BODY="**Status:** HTTP ${{ steps.ping.outputs.http_code }}
+          **Latency:** ${{ steps.ping.outputs.latency_ms }}ms
+          **Time:** ${{ steps.ping.outputs.timestamp }}
+          **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Updated existing issue #${EXISTING}"
+          else
+            gh issue create --title "$TITLE" --label "agentic-ci" --body "$BODY"
+            echo "Created new issue"
+          fi
+
+      - name: Report recovery
+        if: steps.ping.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Agentic CI: Inference API health check failure"
+          EXISTING=$(gh issue list --state open --search "$TITLE" --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "**Recovered** - API responding normally. HTTP ${{ steps.ping.outputs.http_code }}, ${{ steps.ping.outputs.latency_ms }}ms at ${{ steps.ping.outputs.timestamp }}"
+            gh issue close "$EXISTING"
+            echo "Closed recovered issue #${EXISTING}"
+          fi
